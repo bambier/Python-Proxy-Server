@@ -1,5 +1,5 @@
 # Python-Proxy-Server
-Python Proxy server can be use with Django 
+Python Sokcs5 Proxy server can be use with Django 
 
 
 

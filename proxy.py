@@ -2,10 +2,8 @@ import select
 import socket
 import threading
 import logging
-import sys
 import ssl
 import argparse
-import asyncio
 
 
 # Set up logging configuration
@@ -13,7 +11,6 @@ logging.basicConfig(
     filename="proxy.log",
     level=logging.ERROR,
     format='[%(levelname)s] %(message)s',
-    # handlers=[logging.StreamHandler(sys.stdout)]
 )
 
 # Create logger object
@@ -76,7 +73,7 @@ class ProxyServer():
         connection.sendall(bytes([SOCKS_VERSION, 2]))
 
         if not self.verify_credentials(connection, address):
-            return
+            return False
 
         version, cmd, rsv, address_type = connection.recv(4)
         if address_type == 1:
@@ -93,8 +90,23 @@ class ProxyServer():
             if cmd == 1:
                 remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 remote.connect((address, port))
-                # if port == 443:
-                #     remote = context.wrap_socket(remote, server_hostname=address, server_side=True)
+                # SSL support
+                try:
+                    if port == 443:
+                        remote = context.wrap_socket(
+                            remote, server_hostname=address, server_side=True,
+                            do_handshake_on_connect=True,
+                            suppress_ragged_eofs=True)
+                except ValueError as error:
+                    if port == 443:
+                        remote = context.wrap_socket(
+                            remote, server_hostname=address,
+                            do_handshake_on_connect=True,
+                            suppress_ragged_eofs=True)
+                except Exception as error:
+                    print(type(error).__name__)
+                    logging.error(f"[Exception Error] {error}, {address}")
+
                 bind_address = remote.getsockname()
                 logging.info(f"* Connected to {address} {port}")
             else:
@@ -115,7 +127,6 @@ class ProxyServer():
             ])
 
         except Exception as error:
-            print(error)
             logging.critical(
                 f"[Exception] Connection close unexpectedly, {str(error)}")
             reply = self.generate_failed_reply(address_type, 5)
@@ -125,7 +136,7 @@ class ProxyServer():
         if reply[1] == 0 and cmd == 1:
             self.exchange_loop(connection, remote)
         connection.close()
-        logging.critical(
+        logging.warning(
             f"[CLOSE CONNECTION] Connection closed at {address} at handle client after exchange loop")
 
     def exchange_loop(self, client, remote):
@@ -135,17 +146,17 @@ class ProxyServer():
             r, w, e = select.select([client, remote], [], [])
             try:
                 if client in r:
-                    data = client.recv(4096)
+                    data = client.recv(8192)
                     if remote.send(data) <= 0:
                         break
 
                 if remote in r:
-                    data = remote.recv(4096)
+                    data = remote.recv(8192)
                     if client.send(data) <= 0:
                         break
             except ConnectionResetError as error:
                 logging.error(
-                    f"[CONNECTION RESET] Connection reseted. [ERROR] {str(error)}")
+                    f"[CONNECTION RESET] {error}")
 
     def generate_failed_reply(self, address_type, error_number):
         """Generate Failed Reply for client   
